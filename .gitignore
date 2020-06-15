@@ -118,17 +118,12 @@ src/**/.venv
 
 data/
 
-classifiers/
+models/
 
 .DS_Store
 *.d.ts
 *.js
 cdk.out/
 .requirements.zip
-
-# resources dir
-resources
-
-unzip_requirements.py
 
 json.json
