@@ -1,0 +1,13 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[packages]
+pylint = "==2.4.4"
+black = "==19.3b0"
+torch = "*"
+transformers = "*"
+
+[requires]
+python_version = "3.6"
