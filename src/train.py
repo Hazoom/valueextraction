@@ -1,30 +1,49 @@
 import os
 import json
 import argparse
+import logging
 import torch
 from torch import nn
 from transformers import BertPreTrainedModel, BertModel, BertTokenizer
 
 
+logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
+
+
 def _load_data(data_file: str):
+    results = []
     with open(data_file, "r") as in_fp:
-        return [json.loads(j_line.strip()) for j_line in list(in_fp)]
+        for json_line in in_fp:
+            try:
+                utterance_json = json.loads(json_line.strip())
+                value = utterance_json["value"]
+                parameter = utterance_json["parameter"]
+                utterance = utterance_json["utterance"]
+                if not value:
+                    logging.warning(f"value is empty in: {utterance_json}")
+                    continue
+                if not parameter:
+                    logging.warning(f"parameter is empty in: {utterance_json}")
+                    continue
+                if value not in utterance:
+                    logging.warning(f"value: '{value}' not in utterance: {utterance}")
+                    continue
+                results.append(utterance_json)
+            except json.decoder.JSONDecodeError:
+                logging.warning(f"line: {json_line.strip()} has a broken json schema")
+    return results
 
 
-def _encode_json(tokenizer, train_json):
-    utterance_encoding = tokenizer.encode_plus(train_json["utterance"])
-    parameter_encoding = tokenizer.encode_plus(train_json["parameter"])
+def _encode_json(tokenizer, sample_json: dict):
+    utterance_encoding = tokenizer.encode_plus(sample_json["utterance"])
+    parameter_encoding = tokenizer.encode_plus(sample_json["parameter"])
 
-    value = train_json["value"]
-    if not value:
-        print("problem")
-        return dict()
-
+    value = sample_json["value"]
     value_token_id = tokenizer.encode_plus(value, add_special_tokens=False)["input_ids"][0]
 
     if value_token_id not in utterance_encoding["input_ids"]:
-        print("problem")
-        return dict()
+        logging.warning(f"value {value} not in utterance as a word: {sample_json['utterance']}")
+        return None
 
     value_token_position = utterance_encoding["input_ids"].index(value_token_id)
     pair_input_ids = utterance_encoding["input_ids"] + parameter_encoding["input_ids"][1:]
@@ -147,11 +166,17 @@ def train(train_file: str, val_file: str, output_dir: str):
 
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
+    logging.info("Loading train JSONs...")
     train_jsons = _load_data(train_file)
+    logging.info("Loading validation JSONs...")
     val_jsons = _load_data(val_file)
 
+    logging.info("Encoding training samples...")
     train_encoded = [_encode_json(tokenizer, json_line) for json_line in train_jsons]
-    val_encoded = [_encode_json(tokenizer, json_line) for json_line in train_jsons]
+    train_encoded = [sample for sample in train_encoded if sample]
+    logging.info("Encoding validation samples...")
+    val_encoded = [_encode_json(tokenizer, json_line) for json_line in val_jsons]
+    val_encoded = [sample for sample in val_encoded if sample]
 
 
 def main():
