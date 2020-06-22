@@ -4,6 +4,7 @@ import json
 import argparse
 import logging
 from tqdm import trange
+import ftfy
 import pandas as pd
 import torch
 from torch import nn
@@ -66,8 +67,13 @@ def _encode_json(tokenizer, sample_json: dict, max_sequence_length: int) -> Dict
     :param max_sequence_length: max sequence length (BERT padding is performed if necessary)
     :return: Dict
     """
+    utterance = sample_json["utterance"]
+
+    # convert non UTF-8 characters to their matching character in the utterance
+    utterance = ftfy.fix_text(utterance)
+
     pair_encoded = tokenizer.encode_plus(
-        sample_json["utterance"],
+        utterance,
         sample_json["parameter"],
         add_special_tokens=True,
         pad_to_max_length=True,
@@ -83,7 +89,7 @@ def _encode_json(tokenizer, sample_json: dict, max_sequence_length: int) -> Dict
     pair_input_ids = pair_encoded["input_ids"]
 
     if value_token_id not in pair_input_ids:
-        logging.warning(f"value {value} not in utterance as a word: {sample_json['utterance']}")
+        logging.warning(f"value {value} not in utterance as a word: {utterance}")
         return {}
 
     value_token_position = pair_input_ids.index(value_token_id)
@@ -122,8 +128,7 @@ class BertForValueExtraction(BertPreTrainedModel):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.ff = nn.Sequential(nn.Linear(config.hidden_size, 100), nn.ReLU(), nn.Dropout(FEED_FORWARD_DROPOUT),
                                 nn.Linear(100, 50), nn.ReLU(), nn.Dropout(FEED_FORWARD_DROPOUT),
-                                nn.Linear(50, 1),
-                                nn.Linear(1, 1))
+                                nn.Linear(50, 1))
 
         self.init_weights()
 
@@ -180,6 +185,7 @@ def _train_model(model: BertForValueExtraction, optimizer, scheduler, train_data
         total_loss = 0
 
         # training loop
+        train_true_labels, train_predictions = [], []
         for step, batch in enumerate(train_data_loader):
             # add batch to gpu if available
             batch = tuple(t.to(device) for t in batch)
@@ -195,6 +201,13 @@ def _train_model(model: BertForValueExtraction, optimizer, scheduler, train_data
 
             # get the loss
             loss = outputs[0]
+
+            # move logits and labels to CPU
+            logits = outputs[1].detach().cpu().numpy()
+            b_labels = b_labels.to("cpu").numpy()
+
+            train_predictions.extend(logits.argmax(1))
+            train_true_labels.extend(b_labels)
 
             # perform a backward pass to calculate the gradients
             loss.backward()
@@ -215,6 +228,8 @@ def _train_model(model: BertForValueExtraction, optimizer, scheduler, train_data
         # calculate the average loss over the training data.
         avg_train_loss = total_loss / len(train_data_loader)
         logging.info(f"Average train loss on epoch {epoch_number}: {avg_train_loss}")
+        accuracy = accuracy_score(train_predictions, train_true_labels)[0]
+        logging.info(f"Train Accuracy on epoch {epoch_number + 1}: {accuracy}")
 
         # Put the model into evaluation mode
         model.eval()
